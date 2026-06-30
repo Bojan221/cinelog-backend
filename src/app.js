@@ -9,14 +9,7 @@ const app = express();
 
 app.use(express.json())
 
-app.get('/', async (req,res) => {
-    try{
-        const [rows] = await db.query('SELECT * FROM users')
-        res.status(200).json(rows)
-    } catch(err) { 
-        console.log(err)
-    }
-})
+app.use('/', require('./routes/routes'))
 
 app.listen(port, async () => {
     try { 
