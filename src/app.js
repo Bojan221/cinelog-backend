@@ -1,22 +1,27 @@
-const express = require('express');
-require('dotenv').config();
-const db = require('./config/db');
+const express = require("express");
+require("dotenv").config();
+const db = require("./config/db");
+const cors = require('cors')
+const cookieParser = require("cookie-parser");
 
 const port = process.env.PORT || 5000;
 
 const app = express();
 
-
-app.use(express.json())
-
-app.use('/', require('./routes/routes'))
+app.use(express.json());
+app.use(cookieParser());
+app.use(cors({
+  origin: "http://localhost:3000",
+  credentials: true
+}));
+app.use("/", require("./routes/routes"));
 
 app.listen(port, async () => {
-    try { 
-        await db.query('SELECT 1');
-        console.log("Database connected successfully!")
-    }catch { 
-        console.log('Error connecting to database')
-    }
-    console.log(`Server is running on port ${port}`)
-})
+  try {
+    await db.query("SELECT 1");
+    console.log("Database connected successfully!");
+  } catch {
+    console.log("Error connecting to database");
+  }
+  console.log(`Server is running on port ${port}`);
+});
