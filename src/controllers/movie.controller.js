@@ -8,6 +8,7 @@ const getAllMovies = async(req,res) => {
             tmdbId:movie.id,
             title: movie.title,
             overview: movie.overview,
+            backdrop:movie.backdrop_path,
             poster: movie.poster_path,
             releaseDate: movie.release_date,
             vote: movie.vote_average,
