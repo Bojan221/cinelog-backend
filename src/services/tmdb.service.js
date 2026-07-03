@@ -28,6 +28,10 @@ const TmdbService = {
     const result = await apiClient.get("/genre/movie/list?language=en");
     return result.data;
   },
+  getSingleMovie: async(id)=> { 
+    const result = await apiClient.get(`/movie/${id}?append_to_response=credits,videos,images,recommendations,similar,reviews,keywords`)
+    return result.data
+  }
 };
 
 module.exports = { TmdbService };
