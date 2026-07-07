@@ -31,6 +31,10 @@ const TmdbService = {
   getSingleMovie: async(id)=> { 
     const result = await apiClient.get(`/movie/${id}?append_to_response=credits,videos,images,recommendations,similar,reviews,keywords`)
     return result.data
+  },
+  getActor: async(id) => { 
+    const result = await apiClient.get(`/person/${id}?append_to_response=movie_credits,tv_credits,images,external_ids`)
+    return result.data
   }
 };
 

@@ -1,9 +1,20 @@
-const express = require('express')
-const router = express.Router()
-const {getAllMovies, getMovieGenres, getMovieById} = require('../controllers/movie.controller')
+const express = require("express");
+const router = express.Router();
+const {
+  getAllMovies,
+  getMovieGenres,
+  getMovieById,
+  addMovieToList,
+  getMoviesFromList,
+} = require("../controllers/movie.controller");
 
-router.get('/allMovies',getAllMovies)
-router.get('/movieGenres',getMovieGenres)
-router.get('/movieDetails/:id', getMovieById)
+// Discovery / details
+router.get("/genres", getMovieGenres);
+router.get("/", getAllMovies);
+router.get("/:id", getMovieById);
+
+// User lists
+router.post("/lists", addMovieToList);
+router.get("/lists/:listName", getMoviesFromList);
 
 module.exports = router;

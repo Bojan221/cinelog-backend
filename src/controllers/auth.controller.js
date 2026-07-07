@@ -4,37 +4,49 @@ const jwt = require("jsonwebtoken");
 
 const registerUser = async (req, res) => {
   try {
-    const { firstName, lastName, username, password, terms, email } = req.body;
-    const salt = 10;
+    const { firstName, lastName, username, password, email } = req.body;
 
-    const hashedPassword = await bcrypt.hash(password, salt);
-    const query = "SELECT * FROM users WHERE email = ? OR username = ?";
-    const [rows] = await db.query(query, [email, username]);
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    const [rows] = await db.query(
+      "SELECT * FROM users WHERE email = ? OR username = ?",
+      [email, username]
+    );
 
     if (rows.length > 0) {
       return res.status(400).json({
-        message: "The user with this email or user name already exists.",
+        message: "User already exists",
       });
     }
 
-    const insertQuery =
-      "INSERT INTO users (email, password, username, first_name, last_name) VALUES(?,?,?,?,?)";
+    const [result] = await db.query(
+      `INSERT INTO users (email, password, username, first_name, last_name)
+       VALUES (?, ?, ?, ?, ?)`,
+      [email, hashedPassword, username, firstName, lastName]
+    );
 
-    const [result] = await db.query(insertQuery, [
-      email,
-      hashedPassword,
-      username,
-      firstName,
-      lastName,
+    const userId = result.insertId;
+
+    const listsQuery = `
+      INSERT INTO lists (user_id, name, media_type, is_default, is_public)
+      VALUES
+      (?, 'Watchlist', 'movie', 1, 0),
+      (?, 'Watched', 'movie', 1, 0),
+      (?, 'Favorites', 'movie', 1, 0),
+      (?, 'Watchlist', 'tv', 1, 0),
+      (?, 'Watched', 'tv', 1, 0),
+      (?, 'Watching', 'tv', 1, 0),
+      (?, 'Favorites', 'tv', 1, 0)
+    `;
+
+    await db.query(listsQuery, [
+      userId, userId, userId, userId, userId, userId, userId
     ]);
 
-    if (result.affectedRows === 1) {
-      return res.status(201).json({ message: "User created successfully!" });
-    }
+    return res.status(201).json({ message: "User created successfully!" });
 
-    return res.status(500).json({ message: "Failed to create user" });
   } catch (err) {
-    res.status(500).json({ message: "Failed to create user" });
+    return res.status(500).json({ message: "Failed to create user" });
   }
 };
 
