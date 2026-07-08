@@ -4,6 +4,7 @@ const authMiddleware = require('../middleware/authMiddleware')
 
 router.use("/auth", require("./auth.routes"));
 router.use("/movies",authMiddleware,require("./movies.routes"))
+router.use("/series",authMiddleware,require("./series.routes"))
 router.use("/actors",authMiddleware,require("./actors.routes"))
 
 module.exports = router;

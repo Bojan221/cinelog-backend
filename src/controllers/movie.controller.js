@@ -1,7 +1,6 @@
 const { TmdbService } = require("../services/tmdb.service");
 const db = require("../config/db");
 
-// Frontend salje ljudski citljiva imena, baza ima kanonska imena lista
 const LIST_NAME_MAP = {
   "watch list": "Watchlist",
   watchlist: "Watchlist",
@@ -165,7 +164,6 @@ const addMovieToList = async (req, res) => {
     const canonicalName =
       LIST_NAME_MAP[String(listName).trim().toLowerCase()] || listName;
 
-    // Provera da li film postoji u tabeli media
     const [rows] = await db.query(
       "SELECT id FROM media WHERE tmdbId = ?",
       [movieId]
