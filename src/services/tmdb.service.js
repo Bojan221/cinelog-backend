@@ -61,6 +61,12 @@ const TmdbService = {
   getSingleSerie: async(id) => {
     const result = await apiClient.get(`/tv/${id}?language=en-US&append_to_response=aggregate_credits,content_ratings,external_ids,images,keywords,recommendations,reviews,similar,videos`)
     return result.data;
+  },
+  getSerieSeason: async (id, seasonNumber) => {
+    const result = await apiClient.get(
+      `/tv/${id}/season/${seasonNumber}?language=en-US`
+    );
+    return result.data;
   }
 };
 

@@ -12,8 +12,21 @@ const LIST_NAME_MAP = {
 
 const getAllMovies = async (req, res) => {
   try {
+    const userId = req.user.id;
     const searchQuery = req.query;
     const data = await TmdbService.getAllMovies(searchQuery);
+
+    const [favoriteRows] = await db.query(
+      `SELECT m.tmdbId
+       FROM list_items li
+       JOIN media m ON m.id = li.media_id
+       JOIN lists l ON l.id = li.list_id
+       WHERE l.user_id = ? AND l.name = ? AND l.media_type = ?`,
+      [userId, "Favorites", "movie"]
+    );
+
+    const favoriteIds = new Set(favoriteRows.map((row) => row.tmdbId));
+
     const movies = data.results.map((movie) => ({
       tmdbId: movie.id,
       title: movie.title,
@@ -22,6 +35,7 @@ const getAllMovies = async (req, res) => {
       poster: movie.poster_path,
       releaseDate: movie.release_date,
       vote: movie.vote_average,
+      favorites: favoriteIds.has(movie.id),
     }));
     res
       .status(200)
@@ -157,6 +171,7 @@ const addMovieToList = async (req, res) => {
       poster,
       vote,
       releaseDate,
+      runtime,
     } = req.body;
 
     const userId = req.user.id;
@@ -170,11 +185,10 @@ const addMovieToList = async (req, res) => {
     );
 
     let movieDbId;
-
     if (rows.length === 0) {
       const [result] = await db.query(
-        "INSERT INTO media (tmdbId, title, overview, poster, releaseDate, vote) VALUES (?, ?, ?, ?, ?, ?)",
-        [movieId, title, overview, poster, releaseDate, vote]
+        "INSERT INTO media (tmdbId, title, overview, poster, releaseDate, vote, runtime) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [movieId, title, overview, poster, releaseDate, vote, runtime ?? null]
       );
 
       movieDbId = result.insertId;
@@ -268,15 +282,138 @@ const getMoviesFromList = async (req, res) => {
 
     const listId = list[0].id;
 
-    const [movies] = await db.query(
-      `SELECT m.tmdbId, m.title, m.overview, m.poster, m.releaseDate, m.vote
+    const [rows] = await db.query(
+      `SELECT m.tmdbId, m.title, m.overview, m.poster, m.releaseDate, m.vote, m.runtime
        FROM list_items li
        JOIN media m ON m.id = li.media_id
        WHERE li.list_id = ?`,
       [listId]
     );
 
+    const [favoriteRows] = await db.query(
+      `SELECT m.tmdbId
+       FROM list_items li
+       JOIN media m ON m.id = li.media_id
+       JOIN lists l ON l.id = li.list_id
+       WHERE l.user_id = ? AND l.name = ? AND l.media_type = ?`,
+      [userId, "Favorites", "movie"]
+    );
+
+    const favoriteIds = new Set(favoriteRows.map((row) => row.tmdbId));
+
+    const movies = rows.map((movie) => ({
+      ...movie,
+      favorites: favoriteIds.has(movie.tmdbId),
+    }));
+
     return res.status(200).json({ list: canonicalName, movies });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ message: "Server error" });
+  }
+};
+
+const removeMovieFromList = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { listName, movieId } = req.params;
+
+    const canonicalName =
+      LIST_NAME_MAP[String(listName).trim().toLowerCase()] || listName;
+
+    const [list] = await db.query(
+      "SELECT id FROM lists WHERE user_id = ? AND name = ? AND media_type = ?",
+      [userId, canonicalName, "movie"]
+    );
+
+    if (list.length === 0) {
+      return res.status(404).json({ message: "List not found" });
+    }
+
+    const listId = list[0].id;
+
+    const [media] = await db.query(
+      "SELECT id FROM media WHERE tmdbId = ?",
+      [movieId]
+    );
+
+    if (media.length === 0) {
+      return res.status(404).json({ message: "Movie not found" });
+    }
+
+    const movieDbId = media[0].id;
+
+    const [result] = await db.query(
+      "DELETE FROM list_items WHERE list_id = ? AND media_id = ?",
+      [listId, movieDbId]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: "Movie is not in this list" });
+    }
+
+    return res.status(200).json({ message: "Movie removed from list" });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ message: "Server error" });
+  }
+};
+
+const moveToWatched = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { movieId } = req.params;
+
+    const [media] = await db.query(
+      "SELECT id FROM media WHERE tmdbId = ?",
+      [movieId]
+    );
+
+    if (media.length === 0) {
+      return res.status(404).json({ message: "Movie not found" });
+    }
+
+    const movieDbId = media[0].id;
+
+    const [lists] = await db.query(
+      "SELECT id, name FROM lists WHERE user_id = ? AND name IN (?, ?) AND media_type = ?",
+      [userId, "Watchlist", "Watched", "movie"]
+    );
+
+    const watchlist = lists.find((l) => l.name === "Watchlist");
+    const watched = lists.find((l) => l.name === "Watched");
+
+    if (!watchlist || !watched) {
+      return res.status(404).json({ message: "List not found" });
+    }
+
+    const [inWatchlist] = await db.query(
+      "SELECT id FROM list_items WHERE list_id = ? AND media_id = ?",
+      [watchlist.id, movieDbId]
+    );
+
+    if (inWatchlist.length === 0) {
+      return res.status(404).json({ message: "Movie is not in Watchlist" });
+    }
+
+    await db.query(
+      "DELETE FROM list_items WHERE list_id = ? AND media_id = ?",
+      [watchlist.id, movieDbId]
+    );
+
+    const [inWatched] = await db.query(
+      "SELECT id FROM list_items WHERE list_id = ? AND media_id = ?",
+      [watched.id, movieDbId]
+    );
+
+    if (inWatched.length === 0) {
+      await db.query(
+        "INSERT INTO list_items (list_id, media_id) VALUES (?, ?)",
+        [watched.id, movieDbId]
+      );
+    }
+
+    return res.status(200).json({ message: "Movie moved to Watched" });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ message: "Server error" });
@@ -289,4 +426,6 @@ module.exports = {
   getMovieById,
   addMovieToList,
   getMoviesFromList,
+  removeMovieFromList,
+  moveToWatched,
 };

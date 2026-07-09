@@ -184,4 +184,39 @@ const getSerieById = async (req, res) => {
   }
 };
 
-module.exports = { getAllSeries, getSerieGenres, getSerieById };
+const getSerieSeason = async (req, res) => {
+  try {
+    const { id, seasonNumber } = req.params;
+    const data = await TmdbService.getSerieSeason(id, seasonNumber);
+
+    const season = {
+      id: data.id,
+      name: data.name,
+      overview: data.overview,
+      poster: data.poster_path,
+      airDate: data.air_date,
+      seasonNumber: data.season_number,
+      vote: data.vote_average,
+
+      episodes: (data.episodes || []).map((episode) => ({
+        id: episode.id,
+        name: episode.name,
+        overview: episode.overview,
+        still: episode.still_path,
+        airDate: episode.air_date,
+        episodeNumber: episode.episode_number,
+        seasonNumber: episode.season_number,
+        runtime: episode.runtime,
+        vote: episode.vote_average,
+        voteCount: episode.vote_count,
+      })),
+    };
+
+    res.status(200).json({ season });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server Error" });
+  }
+};
+
+module.exports = { getAllSeries, getSerieGenres, getSerieById, getSerieSeason };
