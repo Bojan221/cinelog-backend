@@ -8,6 +8,8 @@ const {
   getMoviesFromList,
   removeMovieFromList,
   moveToWatched,
+  getMyLists,
+  createList
 } = require("../controllers/movie.controller");
 
 // Discovery / details
@@ -17,6 +19,8 @@ router.get("/:id", getMovieById);
 
 // User lists
 router.post("/lists", addMovieToList);
+router.post("/lists/create", createList);
+router.get("/lists/myLists", getMyLists);
 router.get("/lists/:listName", getMoviesFromList);
 router.delete("/lists/:listName/:movieId", removeMovieFromList);
 router.patch("/lists/watched/:movieId", moveToWatched);

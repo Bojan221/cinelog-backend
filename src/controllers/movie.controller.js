@@ -428,6 +428,37 @@ const moveToWatched = async (req, res) => {
   }
 };
 
+const getMyLists = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const [lists] = await db.query(
+      "SELECT * FROM lists WHERE user_id = ? AND name NOT IN (?, ?, ?, ?)",
+      [userId, "Watched", "Watching", "Watchlist", "Favorites"],
+    );
+    res.status(200).json({lists})
+  } catch {
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+const createList = async(req,res) => { 
+  try {
+    const {name, isPublic} = req.body
+    const userId = req.user.id
+
+    const [existing] = await db.query("SELECT * FROM lists WHERE user_id = ? AND name = ?",[userId, name])
+    if(existing.length > 0) { 
+      return res.status(409).json({message:"List with this name already exists"})
+    }
+
+    const [insertedList] = await db.query("INSERT INTO lists(user_id,name,media_type,is_default,is_public) VALUES(?,?,?,?,?)",[userId, name, 'movie',0,isPublic])
+    return res.status(200).json({message:"List successfully added."})
+  } catch { 
+    res.status(500).json({message:"Server error"})
+  }
+}
+
 module.exports = {
   getAllMovies,
   getMovieGenres,
@@ -436,4 +467,6 @@ module.exports = {
   getMoviesFromList,
   removeMovieFromList,
   moveToWatched,
+  getMyLists,
+  createList
 };
