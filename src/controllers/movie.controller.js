@@ -22,7 +22,7 @@ const getAllMovies = async (req, res) => {
        JOIN media m ON m.id = li.media_id
        JOIN lists l ON l.id = li.list_id
        WHERE l.user_id = ? AND l.name = ? AND l.media_type = ?`,
-      [userId, "Favorites", "movie"]
+      [userId, "Favorites", "movie"],
     );
 
     const favoriteIds = new Set(favoriteRows.map((row) => row.tmdbId));
@@ -180,15 +180,24 @@ const addMovieToList = async (req, res) => {
       LIST_NAME_MAP[String(listName).trim().toLowerCase()] || listName;
 
     const [rows] = await db.query(
-      "SELECT id FROM media WHERE tmdbId = ?",
-      [movieId]
+      "SELECT id FROM media WHERE tmdbId = ? AND type = ?",
+      [movieId, "movie"],
     );
 
     let movieDbId;
     if (rows.length === 0) {
       const [result] = await db.query(
-        "INSERT INTO media (tmdbId, title, overview, poster, releaseDate, vote, runtime) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        [movieId, title, overview, poster, releaseDate, vote, runtime ?? null]
+        "INSERT INTO media (tmdbId, title, overview, poster, releaseDate, vote, runtime, type) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+          movieId,
+          title,
+          overview,
+          poster,
+          releaseDate,
+          vote,
+          runtime ?? null,
+          "movie",
+        ],
       );
 
       movieDbId = result.insertId;
@@ -202,7 +211,7 @@ const addMovieToList = async (req, res) => {
 
       const [otherList] = await db.query(
         "SELECT id FROM lists WHERE user_id = ? AND name = ? AND media_type = ?",
-        [userId, secondList, "movie"]
+        [userId, secondList, "movie"],
       );
 
       if (otherList.length > 0) {
@@ -210,7 +219,7 @@ const addMovieToList = async (req, res) => {
 
         const [existsInSecondList] = await db.query(
           "SELECT id FROM list_items WHERE list_id = ? AND media_id = ?",
-          [secondListId, movieDbId]
+          [secondListId, movieDbId],
         );
 
         if (existsInSecondList.length > 0) {
@@ -223,7 +232,7 @@ const addMovieToList = async (req, res) => {
 
     const [list] = await db.query(
       "SELECT id FROM lists WHERE user_id = ? AND name = ? AND media_type = ?",
-      [userId, canonicalName, "movie"]
+      [userId, canonicalName, "movie"],
     );
 
     if (list.length === 0) {
@@ -236,7 +245,7 @@ const addMovieToList = async (req, res) => {
 
     const [existing] = await db.query(
       "SELECT id FROM list_items WHERE list_id = ? AND media_id = ?",
-      [listId, movieDbId]
+      [listId, movieDbId],
     );
 
     if (existing.length > 0) {
@@ -245,10 +254,10 @@ const addMovieToList = async (req, res) => {
       });
     }
 
-    await db.query(
-      "INSERT INTO list_items (list_id, media_id) VALUES (?, ?)",
-      [listId, movieDbId]
-    );
+    await db.query("INSERT INTO list_items (list_id, media_id) VALUES (?, ?)", [
+      listId,
+      movieDbId,
+    ]);
 
     return res.status(201).json({
       message: "Movie added to list",
@@ -262,7 +271,6 @@ const addMovieToList = async (req, res) => {
   }
 };
 
-
 const getMoviesFromList = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -273,7 +281,7 @@ const getMoviesFromList = async (req, res) => {
 
     const [list] = await db.query(
       "SELECT id FROM lists WHERE user_id = ? AND name = ? AND media_type = ?",
-      [userId, canonicalName, "movie"]
+      [userId, canonicalName, "movie"],
     );
 
     if (list.length === 0) {
@@ -283,11 +291,11 @@ const getMoviesFromList = async (req, res) => {
     const listId = list[0].id;
 
     const [rows] = await db.query(
-      `SELECT m.tmdbId, m.title, m.overview, m.poster, m.releaseDate, m.vote, m.runtime
+      `SELECT m.tmdbId, m.title, m.overview, m.poster, m.releaseDate, m.vote, m.runtime, li.added_at
        FROM list_items li
        JOIN media m ON m.id = li.media_id
        WHERE li.list_id = ?`,
-      [listId]
+      [listId],
     );
 
     const [favoriteRows] = await db.query(
@@ -296,7 +304,7 @@ const getMoviesFromList = async (req, res) => {
        JOIN media m ON m.id = li.media_id
        JOIN lists l ON l.id = li.list_id
        WHERE l.user_id = ? AND l.name = ? AND l.media_type = ?`,
-      [userId, "Favorites", "movie"]
+      [userId, "Favorites", "movie"],
     );
 
     const favoriteIds = new Set(favoriteRows.map((row) => row.tmdbId));
@@ -323,7 +331,7 @@ const removeMovieFromList = async (req, res) => {
 
     const [list] = await db.query(
       "SELECT id FROM lists WHERE user_id = ? AND name = ? AND media_type = ?",
-      [userId, canonicalName, "movie"]
+      [userId, canonicalName, "movie"],
     );
 
     if (list.length === 0) {
@@ -333,8 +341,8 @@ const removeMovieFromList = async (req, res) => {
     const listId = list[0].id;
 
     const [media] = await db.query(
-      "SELECT id FROM media WHERE tmdbId = ?",
-      [movieId]
+      "SELECT id FROM media WHERE tmdbId = ? AND type = ?",
+      [movieId, "movie"],
     );
 
     if (media.length === 0) {
@@ -345,7 +353,7 @@ const removeMovieFromList = async (req, res) => {
 
     const [result] = await db.query(
       "DELETE FROM list_items WHERE list_id = ? AND media_id = ?",
-      [listId, movieDbId]
+      [listId, movieDbId],
     );
 
     if (result.affectedRows === 0) {
@@ -365,8 +373,8 @@ const moveToWatched = async (req, res) => {
     const { movieId } = req.params;
 
     const [media] = await db.query(
-      "SELECT id FROM media WHERE tmdbId = ?",
-      [movieId]
+      "SELECT id FROM media WHERE tmdbId = ? AND type = ?",
+      [movieId, "movie"],
     );
 
     if (media.length === 0) {
@@ -377,7 +385,7 @@ const moveToWatched = async (req, res) => {
 
     const [lists] = await db.query(
       "SELECT id, name FROM lists WHERE user_id = ? AND name IN (?, ?) AND media_type = ?",
-      [userId, "Watchlist", "Watched", "movie"]
+      [userId, "Watchlist", "Watched", "movie"],
     );
 
     const watchlist = lists.find((l) => l.name === "Watchlist");
@@ -389,7 +397,7 @@ const moveToWatched = async (req, res) => {
 
     const [inWatchlist] = await db.query(
       "SELECT id FROM list_items WHERE list_id = ? AND media_id = ?",
-      [watchlist.id, movieDbId]
+      [watchlist.id, movieDbId],
     );
 
     if (inWatchlist.length === 0) {
@@ -398,18 +406,18 @@ const moveToWatched = async (req, res) => {
 
     await db.query(
       "DELETE FROM list_items WHERE list_id = ? AND media_id = ?",
-      [watchlist.id, movieDbId]
+      [watchlist.id, movieDbId],
     );
 
     const [inWatched] = await db.query(
       "SELECT id FROM list_items WHERE list_id = ? AND media_id = ?",
-      [watched.id, movieDbId]
+      [watched.id, movieDbId],
     );
 
     if (inWatched.length === 0) {
       await db.query(
         "INSERT INTO list_items (list_id, media_id) VALUES (?, ?)",
-        [watched.id, movieDbId]
+        [watched.id, movieDbId],
       );
     }
 

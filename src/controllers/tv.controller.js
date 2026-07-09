@@ -1,21 +1,23 @@
 const { TmdbService } = require("../services/tmdb.service");
+const db = require("../config/db");
 
 const getAllSeries = async (req, res) => {
   try {
-    
     const searchQuery = req.query;
     const data = await TmdbService.getAllSeries(searchQuery);
     const series = data.results.map((serie) => ({
-        tmdbId: serie.id,
-        title: serie.name,
-        overview: serie.overview,
-        poster: serie.poster_path,
-        releaseDate: serie.first_air_date,
-        vote:serie.vote_average,
-        backdrop: serie.backdrop_path,
-        genres: serie.genre_ids
-    }))
-    res.status(200).json({ page: data.page, series: series, totalPages: data.total_pages  });
+      tmdbId: serie.id,
+      title: serie.name,
+      overview: serie.overview,
+      poster: serie.poster_path,
+      releaseDate: serie.first_air_date,
+      vote: serie.vote_average,
+      backdrop: serie.backdrop_path,
+      genres: serie.genre_ids,
+    }));
+    res
+      .status(200)
+      .json({ page: data.page, series: series, totalPages: data.total_pages });
   } catch {
     res.status(500).json({ message: "Server error" });
   }
@@ -219,4 +221,259 @@ const getSerieSeason = async (req, res) => {
   }
 };
 
-module.exports = { getAllSeries, getSerieGenres, getSerieById, getSerieSeason };
+const addTvToList = async (req, res) => {
+  try {
+    const {
+      serieId,
+      listName,
+      title,
+      overview,
+      poster,
+      vote,
+      releaseDate,
+      runtime,
+    } = req.body;
+
+    const userId = req.user.id;
+
+    const [rows] = await db.query(
+      "SELECT id FROM media WHERE tmdbId = ? AND type = ?",
+      [serieId, "tv"],
+    );
+
+    let serieDbId;
+
+    if (rows.length === 0) {
+      const [result] = await db.query(
+        "INSERT INTO media (tmdbId, title, overview, poster, releaseDate, vote, runtime, type) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+          serieId,
+          title,
+          overview,
+          poster,
+          releaseDate,
+          vote,
+          runtime ?? null,
+          "tv",
+        ],
+      );
+
+      serieDbId = result.insertId;
+    } else {
+      serieDbId = rows[0].id;
+    }
+
+    const STATUS_LISTS = ["Watchlist", "Watching", "Watched"];
+
+    if (STATUS_LISTS.includes(listName)) {
+      const otherLists = STATUS_LISTS.filter((name) => name !== listName);
+
+      const [conflicts] = await db.query(
+        `SELECT l.name
+         FROM list_items li
+         JOIN lists l ON l.id = li.list_id
+         WHERE l.user_id = ? AND l.media_type = ? AND l.name IN (?, ?) AND li.media_id = ?`,
+        [userId, "tv", otherLists[0], otherLists[1], serieDbId],
+      );
+
+      if (conflicts.length > 0) {
+        const conflictList = conflicts[0].name;
+        return res.status(409).json({
+          message: `Serie already exists in ${conflictList}. Remove it from ${conflictList} before adding it to ${listName}.`,
+        });
+      }
+    }
+
+    const [list] = await db.query(
+      "SELECT id FROM lists WHERE user_id = ? AND name = ? AND media_type = ?",
+      [userId, listName, "tv"],
+    );
+
+    if (list.length === 0) {
+      return res.status(404).json({
+        message: "List not found",
+      });
+    }
+
+    const listId = list[0].id;
+
+    const [existing] = await db.query(
+      "SELECT id FROM list_items WHERE list_id = ? AND media_id = ?",
+      [listId, serieDbId],
+    );
+
+    if (existing.length > 0) {
+      return res.status(409).json({
+        message: "Serie is already in this list",
+      });
+    }
+
+    await db.query("INSERT INTO list_items (list_id, media_id) VALUES (?, ?)", [
+      listId,
+      serieDbId,
+    ]);
+
+    return res.status(201).json({
+      message: "Serie added to list",
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ message: "Server Error" });
+  }
+};
+
+const getSeriesFromList = async (req, res) => {
+  try {
+    const listName = req.params.listName;
+    const userId = req.user.id;
+
+    const [result] = await db.query(
+      "SELECT id FROM lists WHERE user_id = ? AND name = ? AND media_type = ?",
+      [userId, listName, "tv"],
+    );
+    const listId = result[0].id;
+
+    const [rows] = await db.query(
+      "SELECT * FROM list_items LEFT JOIN media ON list_items.media_id = media.id WHERE list_id = ? ",
+      [listId],
+    );
+
+    const [favoriteRows] = await db.query(
+      `SELECT m.tmdbId
+       FROM list_items li
+       JOIN media m ON m.id = li.media_id
+       JOIN lists l ON l.id = li.list_id
+       WHERE l.user_id = ? AND l.name = ? AND l.media_type = ?`,
+      [userId, "Favorites", "tv"],
+    );
+
+    const favoriteIds = new Set(favoriteRows.map((row) => row.tmdbId));
+
+    const movies = rows.map((serie) => ({
+      ...serie,
+      favorites: favoriteIds.has(serie.tmdbId),
+    }));
+
+    res.status(200).json({ movies });
+  } catch (err) {
+    console.log(err);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+const moveTvToList = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { listName, serieId } = req.params;
+
+    const STATUS_LISTS = ["Watchlist", "Watching", "Watched"];
+
+    if (!STATUS_LISTS.includes(listName)) {
+      return res.status(400).json({ message: "Invalid target list" });
+    }
+
+    const [media] = await db.query(
+      "SELECT id FROM media WHERE tmdbId = ? AND type = ?",
+      [serieId, "tv"],
+    );
+
+    if (media.length === 0) {
+      return res.status(404).json({ message: "Serie not found" });
+    }
+
+    const serieDbId = media[0].id;
+
+    const [lists] = await db.query(
+      "SELECT id, name FROM lists WHERE user_id = ? AND name IN (?, ?, ?) AND media_type = ?",
+      [userId, ...STATUS_LISTS, "tv"],
+    );
+
+    const target = lists.find((l) => l.name === listName);
+
+    if (!target) {
+      return res.status(404).json({ message: "List not found" });
+    }
+
+    const otherListIds = lists
+      .filter((l) => l.name !== listName)
+      .map((l) => l.id);
+
+    if (otherListIds.length > 0) {
+      await db.query(
+        "DELETE FROM list_items WHERE media_id = ? AND list_id IN (?)",
+        [serieDbId, otherListIds],
+      );
+    }
+
+    const [inTarget] = await db.query(
+      "SELECT id FROM list_items WHERE list_id = ? AND media_id = ?",
+      [target.id, serieDbId],
+    );
+
+    if (inTarget.length === 0) {
+      await db.query(
+        "INSERT INTO list_items (list_id, media_id) VALUES (?, ?)",
+        [target.id, serieDbId],
+      );
+    }
+
+    return res.status(200).json({ message: `Serie moved to ${listName}` });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ message: "Server error" });
+  }
+};
+
+const removeTvFromList = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { listName, serieId } = req.params;
+
+    const [list] = await db.query(
+      "SELECT id FROM lists WHERE user_id = ? AND name = ? AND media_type = ?",
+      [userId, listName, "tv"],
+    );
+
+    if (list.length === 0) {
+      return res.status(404).json({ message: "List not found" });
+    }
+
+    const listId = list[0].id;
+
+    const [media] = await db.query(
+      "SELECT id FROM media WHERE tmdbId = ? AND type = ?",
+      [serieId, "tv"],
+    );
+
+    if (media.length === 0) {
+      return res.status(404).json({ message: "Serie not found" });
+    }
+
+    const serieDbId = media[0].id;
+
+    const [result] = await db.query(
+      "DELETE FROM list_items WHERE list_id = ? AND media_id = ?",
+      [listId, serieDbId],
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: "Serie is not in this list" });
+    }
+
+    return res.status(200).json({ message: "Serie removed from list" });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ message: "Server error" });
+  }
+};
+
+module.exports = {
+  getAllSeries,
+  getSerieGenres,
+  getSerieById,
+  getSerieSeason,
+  addTvToList,
+  getSeriesFromList,
+  removeTvFromList,
+  moveTvToList,
+};
