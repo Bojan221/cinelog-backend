@@ -225,6 +225,7 @@ const addTvToList = async (req, res) => {
   try {
     const {
       serieId,
+      listId,
       listName,
       title,
       overview,
@@ -263,43 +264,58 @@ const addTvToList = async (req, res) => {
       serieDbId = rows[0].id;
     }
 
-    const STATUS_LISTS = ["Watchlist", "Watching", "Watched"];
+    let targetListId;
 
-    if (STATUS_LISTS.includes(listName)) {
-      const otherLists = STATUS_LISTS.filter((name) => name !== listName);
-
-      const [conflicts] = await db.query(
-        `SELECT l.name
-         FROM list_items li
-         JOIN lists l ON l.id = li.list_id
-         WHERE l.user_id = ? AND l.media_type = ? AND l.name IN (?, ?) AND li.media_id = ?`,
-        [userId, "tv", otherLists[0], otherLists[1], serieDbId],
+    if (listId) {
+      const [list] = await db.query(
+        "SELECT id FROM lists WHERE id = ? AND user_id = ?",
+        [listId, userId],
       );
 
-      if (conflicts.length > 0) {
-        const conflictList = conflicts[0].name;
-        return res.status(409).json({
-          message: `Serie already exists in ${conflictList}. Remove it from ${conflictList} before adding it to ${listName}.`,
+      if (list.length === 0) {
+        return res.status(404).json({ message: "List not found" });
+      }
+
+      targetListId = list[0].id;
+    } else {
+      const STATUS_LISTS = ["Watchlist", "Watching", "Watched"];
+
+      if (STATUS_LISTS.includes(listName)) {
+        const otherLists = STATUS_LISTS.filter((name) => name !== listName);
+
+        const [conflicts] = await db.query(
+          `SELECT l.name
+           FROM list_items li
+           JOIN lists l ON l.id = li.list_id
+           WHERE l.user_id = ? AND l.media_type = ? AND l.name IN (?, ?) AND li.media_id = ?`,
+          [userId, "tv", otherLists[0], otherLists[1], serieDbId],
+        );
+
+        if (conflicts.length > 0) {
+          const conflictList = conflicts[0].name;
+          return res.status(409).json({
+            message: `Serie already exists in ${conflictList}. Remove it from ${conflictList} before adding it to ${listName}.`,
+          });
+        }
+      }
+
+      const [list] = await db.query(
+        "SELECT id FROM lists WHERE user_id = ? AND name = ? AND media_type = ?",
+        [userId, listName, "tv"],
+      );
+
+      if (list.length === 0) {
+        return res.status(404).json({
+          message: "List not found",
         });
       }
+
+      targetListId = list[0].id;
     }
-
-    const [list] = await db.query(
-      "SELECT id FROM lists WHERE user_id = ? AND name = ? AND media_type = ?",
-      [userId, listName, "tv"],
-    );
-
-    if (list.length === 0) {
-      return res.status(404).json({
-        message: "List not found",
-      });
-    }
-
-    const listId = list[0].id;
 
     const [existing] = await db.query(
       "SELECT id FROM list_items WHERE list_id = ? AND media_id = ?",
-      [listId, serieDbId],
+      [targetListId, serieDbId],
     );
 
     if (existing.length > 0) {
@@ -309,7 +325,7 @@ const addTvToList = async (req, res) => {
     }
 
     await db.query("INSERT INTO list_items (list_id, media_id) VALUES (?, ?)", [
-      listId,
+      targetListId,
       serieDbId,
     ]);
 
@@ -467,6 +483,394 @@ const removeTvFromList = async (req, res) => {
   }
 };
 
+const getSeriesFromListById = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { listId } = req.params;
+
+    const [lists] = await db.query(
+      "SELECT id, user_id, name, media_type, is_default, is_public FROM lists WHERE id = ?",
+      [listId],
+    );
+
+    if (lists.length === 0) {
+      return res.status(404).json({ message: "List not found" });
+    }
+
+    const list = lists[0];
+    const isOwner = list.user_id === userId;
+
+    if (!isOwner && !list.is_public) {
+      return res.status(403).json({ message: "This list is private" });
+    }
+
+    const [rows] = await db.query(
+      `SELECT m.tmdbId, m.title, m.overview, m.poster, m.releaseDate, m.vote, m.runtime, li.added_at
+       FROM list_items li
+       JOIN media m ON m.id = li.media_id
+       WHERE li.list_id = ?
+       ORDER BY li.added_at DESC`,
+      [listId],
+    );
+
+    const [favoriteRows] = await db.query(
+      `SELECT m.tmdbId
+       FROM list_items li
+       JOIN media m ON m.id = li.media_id
+       JOIN lists l ON l.id = li.list_id
+       WHERE l.user_id = ? AND l.name = ? AND l.media_type = ?`,
+      [userId, "Favorites", "tv"],
+    );
+
+    const favoriteIds = new Set(favoriteRows.map((row) => row.tmdbId));
+
+    const series = rows.map((serie) => ({
+      ...serie,
+      favorites: favoriteIds.has(serie.tmdbId),
+    }));
+
+    return res.status(200).json({
+      list: {
+        id: list.id,
+        name: list.name,
+        mediaType: list.media_type,
+        isDefault: !!list.is_default,
+        isPublic: !!list.is_public,
+        isOwner,
+        itemCount: series.length,
+      },
+      series,
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ message: "Server error" });
+  }
+};
+
+const removeTvFromListById = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { listId, serieId } = req.params;
+
+    const [lists] = await db.query(
+      "SELECT id FROM lists WHERE id = ? AND user_id = ?",
+      [listId, userId],
+    );
+
+    if (lists.length === 0) {
+      return res.status(404).json({ message: "List not found" });
+    }
+
+    const [media] = await db.query(
+      "SELECT id FROM media WHERE tmdbId = ? AND type = ?",
+      [serieId, "tv"],
+    );
+
+    if (media.length === 0) {
+      return res.status(404).json({ message: "Serie not found" });
+    }
+
+    const serieDbId = media[0].id;
+
+    const [result] = await db.query(
+      "DELETE FROM list_items WHERE list_id = ? AND media_id = ?",
+      [listId, serieDbId],
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: "Serie is not in this list" });
+    }
+
+    return res.status(200).json({ message: "Serie removed from list" });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ message: "Server error" });
+  }
+};
+
+const getMyTvLists = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const [lists] = await db.query(
+      "SELECT lists.*, COUNT(list_items.id) AS item_count FROM lists LEFT JOIN list_items ON list_items.list_id = lists.id WHERE lists.user_id = ? AND lists.media_type = ? AND lists.name NOT IN (?, ?, ?, ?) GROUP BY lists.id, lists.name",
+      [userId, "tv", "Watched", "Watching", "Watchlist", "Favorites"],
+    );
+    res.status(200).json({ lists });
+  } catch {
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+const createTvList = async (req, res) => {
+  try {
+    const { name, isPublic } = req.body;
+    const userId = req.user.id;
+
+    const [existing] = await db.query(
+      "SELECT * FROM lists WHERE user_id = ? AND name = ? AND media_type = ?",
+      [userId, name, "tv"],
+    );
+    if (existing.length > 0) {
+      return res
+        .status(409)
+        .json({ message: "List with this name already exists" });
+    }
+
+    await db.query(
+      "INSERT INTO lists(user_id,name,media_type,is_default,is_public) VALUES(?,?,?,?,?)",
+      [userId, name, "tv", 0, isPublic],
+    );
+    return res.status(200).json({ message: "List successfully added." });
+  } catch {
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+const updateTvList = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, isPublic } = req.body;
+    const userId = req.user.id;
+
+    if (name) {
+      const [existing] = await db.query(
+        "SELECT * FROM lists WHERE name = ? AND user_id = ? AND media_type = ?",
+        [name, userId, "tv"],
+      );
+      if (existing.length > 0) {
+        return res
+          .status(409)
+          .json({ message: "List with this name already exist" });
+      }
+      await db.query("UPDATE lists SET name = ? WHERE id = ? ", [name, id]);
+      res.status(200).json({ message: "List updated succcessfully" });
+    }
+
+    if (isPublic !== undefined) {
+      const isPublicValue = Number(isPublic) ? 1 : 0;
+      await db.query("UPDATE lists SET is_public = ? WHERE id = ? ", [
+        isPublicValue,
+        id,
+      ]);
+      res.status(200).json({ message: "List updated succcessfully" });
+    }
+  } catch (err) {
+    res.status(500).json({ message: "Server Error" });
+  }
+};
+
+const deleteTvList = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user.id;
+
+    const [deleted] = await db.query(
+      "DELETE FROM lists WHERE id = ? AND user_id = ?",
+      [id, userId],
+    );
+
+    if (deleted.affectedRows === 0) {
+      return res.status(404).json({ message: "List not found" });
+    }
+
+    return res.status(200).json({ message: "List deleted successfully" });
+  } catch {
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+const getOrCreateTvMedia = async (tvshowId) => {
+  const [rows] = await db.query(
+    "SELECT id FROM media WHERE tmdbId = ? AND type = ?",
+    [tvshowId, "tv"],
+  );
+  if (rows.length > 0) return rows[0].id;
+
+  const data = await TmdbService.getSingleSerie(tvshowId);
+  const [result] = await db.query(
+    "INSERT INTO media (tmdbId, title, overview, poster, releaseDate, vote, runtime, type) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    [
+      tvshowId,
+      data.name,
+      data.overview,
+      data.poster_path,
+      data.first_air_date || null,
+      data.vote_average,
+      null,
+      "tv",
+    ],
+  );
+  return result.insertId;
+};
+
+const ensureWatchingStatus = async (userId, tvshowId) => {
+  const serieDbId = await getOrCreateTvMedia(tvshowId);
+
+  const STATUS_LISTS = ["Watchlist", "Watching", "Watched"];
+  const [statusRows] = await db.query(
+    `SELECT l.id, l.name
+       FROM list_items li
+       JOIN lists l ON l.id = li.list_id
+      WHERE l.user_id = ? AND l.media_type = ? AND l.name IN (?, ?, ?) AND li.media_id = ?`,
+    [userId, "tv", ...STATUS_LISTS, serieDbId],
+  );
+
+  const current = new Set(statusRows.map((r) => r.name));
+  if (current.has("Watching") || current.has("Watched")) return;
+
+  const [watchingRows] = await db.query(
+    "SELECT id FROM lists WHERE user_id = ? AND name = ? AND media_type = ?",
+    [userId, "Watching", "tv"],
+  );
+  if (watchingRows.length === 0) return;
+
+  const watchlistRow = statusRows.find((r) => r.name === "Watchlist");
+  if (watchlistRow) {
+    await db.query(
+      "DELETE FROM list_items WHERE list_id = ? AND media_id = ?",
+      [watchlistRow.id, serieDbId],
+    );
+  }
+
+  await db.query(
+    "INSERT IGNORE INTO list_items (list_id, media_id) VALUES (?, ?)",
+    [watchingRows[0].id, serieDbId],
+  );
+};
+
+const markEpisodeWatched = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const tvshowId = req.params.id;
+    const { seasonNumber, episodeNumber } = req.body;
+
+    if (seasonNumber === undefined || episodeNumber === undefined) {
+      return res
+        .status(400)
+        .json({ message: "seasonNumber and episodeNumber are required" });
+    }
+
+    await db.query(
+      `INSERT IGNORE INTO user_episodes
+        (user_id, tvshow_id, season_number, episode_number, watched_at)
+       VALUES (?, ?, ?, ?, NOW())`,
+      [userId, tvshowId, seasonNumber, episodeNumber],
+    );
+
+    // Best-effort: starting to watch a show should mark it as "Watching".
+    // A failure here must not fail the episode write.
+    try {
+      await ensureWatchingStatus(userId, tvshowId);
+    } catch (statusErr) {
+      console.error("ensureWatchingStatus failed:", statusErr);
+    }
+
+    const seasonData = await TmdbService.getSerieSeason(tvshowId, seasonNumber);
+    const totalEpisodes = (seasonData.episodes || []).length;
+
+    const [[{ count }]] = await db.query(
+      `SELECT COUNT(*) AS count FROM user_episodes
+       WHERE user_id = ? AND tvshow_id = ? AND season_number = ?`,
+      [userId, tvshowId, seasonNumber],
+    );
+
+    let seasonCompleted = false;
+    if (totalEpisodes > 0 && count >= totalEpisodes) {
+      await db.query(
+        `INSERT IGNORE INTO user_seasons
+          (user_id, tvshow_id, season_number, completed_at)
+         VALUES (?, ?, ?, NOW())`,
+        [userId, tvshowId, seasonNumber],
+      );
+      seasonCompleted = true;
+    }
+
+    return res.status(201).json({
+      message: "Episode marked as watched",
+      seasonCompleted,
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ message: "Server error" });
+  }
+};
+
+const unmarkEpisodeWatched = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const tvshowId = req.params.id;
+    const { seasonNumber, episodeNumber } = req.body;
+
+    if (seasonNumber === undefined || episodeNumber === undefined) {
+      return res
+        .status(400)
+        .json({ message: "seasonNumber and episodeNumber are required" });
+    }
+
+    const [result] = await db.query(
+      `DELETE FROM user_episodes
+       WHERE user_id = ? AND tvshow_id = ? AND season_number = ? AND episode_number = ?`,
+      [userId, tvshowId, seasonNumber, episodeNumber],
+    );
+
+    if (result.affectedRows > 0) {
+      await db.query(
+        `DELETE FROM user_seasons
+         WHERE user_id = ? AND tvshow_id = ? AND season_number = ?`,
+        [userId, tvshowId, seasonNumber],
+      );
+    }
+
+    return res.status(200).json({ message: "Episode unmarked" });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ message: "Server error" });
+  }
+};
+
+const getShowProgress = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const tvshowId = req.params.id;
+
+    const [rows] = await db.query(
+      `SELECT season_number FROM user_seasons
+       WHERE user_id = ? AND tvshow_id = ?
+       ORDER BY season_number`,
+      [userId, tvshowId],
+    );
+
+    const completedSeasons = rows.map((row) => row.season_number);
+
+    return res.status(200).json({ completedSeasons });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ message: "Server error" });
+  }
+};
+
+const getWatchedEpisodes = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { id: tvshowId, seasonNumber } = req.params;
+
+    const [rows] = await db.query(
+      `SELECT episode_number FROM user_episodes
+       WHERE user_id = ? AND tvshow_id = ? AND season_number = ?
+       ORDER BY episode_number`,
+      [userId, tvshowId, seasonNumber],
+    );
+
+    const watchedEpisodes = rows.map((row) => row.episode_number);
+
+    return res.status(200).json({ watchedEpisodes });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ message: "Server error" });
+  }
+};
+
 module.exports = {
   getAllSeries,
   getSerieGenres,
@@ -474,6 +878,16 @@ module.exports = {
   getSerieSeason,
   addTvToList,
   getSeriesFromList,
+  getSeriesFromListById,
   removeTvFromList,
+  removeTvFromListById,
   moveTvToList,
+  getMyTvLists,
+  createTvList,
+  updateTvList,
+  deleteTvList,
+  markEpisodeWatched,
+  unmarkEpisodeWatched,
+  getShowProgress,
+  getWatchedEpisodes,
 };
