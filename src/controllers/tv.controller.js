@@ -743,7 +743,7 @@ const markEpisodeWatched = async (req, res) => {
   try {
     const userId = req.user.id;
     const tvshowId = req.params.id;
-    const { seasonNumber, episodeNumber } = req.body;
+    const { seasonNumber, episodeNumber, poster } = req.body;
 
     if (seasonNumber === undefined || episodeNumber === undefined) {
       return res
@@ -751,11 +751,13 @@ const markEpisodeWatched = async (req, res) => {
         .json({ message: "seasonNumber and episodeNumber are required" });
     }
 
+    const mediaId = await getOrCreateTvMedia(tvshowId);
+
     await db.query(
       `INSERT IGNORE INTO user_episodes
-        (user_id, tvshow_id, season_number, episode_number, watched_at)
-       VALUES (?, ?, ?, ?, NOW())`,
-      [userId, tvshowId, seasonNumber, episodeNumber],
+        (user_id, tvshow_id, media_id, season_number, episode_number, poster, watched_at)
+       VALUES (?, ?, ?, ?, ?, ?, NOW())`,
+      [userId, tvshowId, mediaId, seasonNumber, episodeNumber, poster ?? null],
     );
 
     // Best-effort: starting to watch a show should mark it as "Watching".

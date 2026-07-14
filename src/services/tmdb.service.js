@@ -73,6 +73,18 @@ const TmdbService = {
     );
     return result.data;
   },
+  getTopRated: async() => { 
+    const result = await apiClient.get('/movie/top_rated')
+    return result.data;
+  },
+  getTrending: async()=> {
+    const result = await apiClient.get('/trending/all/week')
+    return result.data;
+  },
+  getUpcoming: async()=> { 
+    const result = await apiClient.get('/movie/upcoming')
+    return result.data;
+  }
 };
 
 module.exports = { TmdbService };

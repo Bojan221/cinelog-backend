@@ -6,5 +6,6 @@ router.use("/auth", require("./auth.routes"));
 router.use("/movies",authMiddleware,require("./movies.routes"))
 router.use("/series",authMiddleware,require("./series.routes"))
 router.use("/actors",authMiddleware,require("./actors.routes"))
+router.use("/dashboards",authMiddleware,require("./dashboard.routes"))
 
 module.exports = router;
