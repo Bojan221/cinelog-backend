@@ -37,6 +37,13 @@ const getSerieById = async (req, res) => {
     const { id } = req.params;
     const data = await TmdbService.getSingleSerie(id);
 
+    const usRating = (data.content_ratings?.results || []).find(
+      (entry) => entry.iso_3166_1 === "US",
+    );
+    const contentRating = usRating?.rating || null;
+
+    const usProviders = data["watch/providers"]?.results?.US || null;
+
     const serie = {
       tmdbId: data.id,
       title: data.name,
@@ -58,6 +65,11 @@ const getSerieById = async (req, res) => {
       popularity: data.popularity,
       homepage: data.homepage,
       imdbId: data.external_ids?.imdb_id || null,
+      adult: data.adult,
+      originalLanguage: data.original_language,
+      originCountry: data.origin_country || [],
+      languages: data.languages || [],
+      contentRating,
 
       genres: data.genres.map((genre) => ({
         id: genre.id,
@@ -74,12 +86,19 @@ const getSerieById = async (req, res) => {
         id: network.id,
         name: network.name,
         logo: network.logo_path,
+        originCountry: network.origin_country,
       })),
 
       productionCompanies: data.production_companies.map((company) => ({
         id: company.id,
         name: company.name,
         logo: company.logo_path,
+        originCountry: company.origin_country,
+      })),
+
+      productionCountries: (data.production_countries || []).map((country) => ({
+        iso: country.iso_3166_1,
+        name: country.name,
       })),
 
       spokenLanguages: data.spoken_languages.map((language) => ({
@@ -141,12 +160,69 @@ const getSerieById = async (req, res) => {
           (video) => video.site === "YouTube" && video.type === "Trailer",
         ) || null,
 
+      videos: (data.videos?.results || []).map((video) => ({
+        id: video.id,
+        name: video.name,
+        key: video.key,
+        site: video.site,
+        type: video.type,
+        official: video.official,
+        publishedAt: video.published_at,
+      })),
+
       images: {
         posters: (data.images?.posters || []).map((image) => image.file_path),
         backdrops: (data.images?.backdrops || []).map(
           (image) => image.file_path,
         ),
+        logos: (data.images?.logos || []).map((image) => image.file_path),
       },
+
+      externalIds: {
+        imdb: data.external_ids?.imdb_id || null,
+        tvdb: data.external_ids?.tvdb_id || null,
+        facebook: data.external_ids?.facebook_id || null,
+        instagram: data.external_ids?.instagram_id || null,
+        twitter: data.external_ids?.twitter_id || null,
+        wikidata: data.external_ids?.wikidata_id || null,
+      },
+
+      watchProviders: usProviders
+        ? {
+            link: usProviders.link || null,
+            flatrate: (usProviders.flatrate || []).map((p) => ({
+              id: p.provider_id,
+              name: p.provider_name,
+              logo: p.logo_path,
+            })),
+            rent: (usProviders.rent || []).map((p) => ({
+              id: p.provider_id,
+              name: p.provider_name,
+              logo: p.logo_path,
+            })),
+            buy: (usProviders.buy || []).map((p) => ({
+              id: p.provider_id,
+              name: p.provider_name,
+              logo: p.logo_path,
+            })),
+          }
+        : null,
+
+      episodeGroups: (data.episode_groups?.results || []).map((group) => ({
+        id: group.id,
+        name: group.name,
+        description: group.description,
+        groupCount: group.group_count,
+        episodeCount: group.episode_count,
+        type: group.type,
+        network: group.network
+          ? {
+              id: group.network.id,
+              name: group.network.name,
+              logo: group.network.logo_path,
+            }
+          : null,
+      })),
 
       similarSeries: (data.similar?.results || []).map((serie) => ({
         tmdbId: serie.id,
@@ -200,6 +276,35 @@ const getSerieSeason = async (req, res) => {
       seasonNumber: data.season_number,
       vote: data.vote_average,
 
+      cast: (data.credits?.cast || data.aggregate_credits?.cast || []).map(
+        (actor) => ({
+          id: actor.id,
+          name: actor.name,
+          character: actor.character || actor.roles?.[0]?.character || null,
+          profile: actor.profile_path,
+        }),
+      ),
+
+      images: {
+        posters: (data.images?.posters || []).map((image) => image.file_path),
+      },
+
+      videos: (data.videos?.results || []).map((video) => ({
+        id: video.id,
+        name: video.name,
+        key: video.key,
+        site: video.site,
+        type: video.type,
+        official: video.official,
+        publishedAt: video.published_at,
+      })),
+
+      externalIds: {
+        imdb: data.external_ids?.imdb_id || null,
+        tvdb: data.external_ids?.tvdb_id || null,
+        wikidata: data.external_ids?.wikidata_id || null,
+      },
+
       episodes: (data.episodes || []).map((episode) => ({
         id: episode.id,
         name: episode.name,
@@ -208,13 +313,127 @@ const getSerieSeason = async (req, res) => {
         airDate: episode.air_date,
         episodeNumber: episode.episode_number,
         seasonNumber: episode.season_number,
+        episodeType: episode.episode_type,
+        productionCode: episode.production_code,
         runtime: episode.runtime,
         vote: episode.vote_average,
         voteCount: episode.vote_count,
+
+        director:
+          (episode.crew || []).find((person) => person.job === "Director") ||
+          null,
+
+        writers: (episode.crew || [])
+          .filter(
+            (person) => person.job === "Writer" || person.department === "Writing",
+          )
+          .map((person) => ({
+            id: person.id,
+            name: person.name,
+            job: person.job,
+            profile: person.profile_path,
+          })),
+
+        guestStars: (episode.guest_stars || []).map((guest) => ({
+          id: guest.id,
+          name: guest.name,
+          character: guest.character,
+          profile: guest.profile_path,
+          order: guest.order,
+        })),
       })),
     };
 
     res.status(200).json({ season });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server Error" });
+  }
+};
+
+const getSerieEpisode = async (req, res) => {
+  try {
+    const { id, seasonNumber, episodeNumber } = req.params;
+    const data = await TmdbService.getSerieEpisode(
+      id,
+      seasonNumber,
+      episodeNumber,
+    );
+
+    const episode = {
+      id: data.id,
+      name: data.name,
+      overview: data.overview,
+      still: data.still_path,
+      airDate: data.air_date,
+      episodeNumber: data.episode_number,
+      seasonNumber: data.season_number,
+      episodeType: data.episode_type,
+      productionCode: data.production_code,
+      runtime: data.runtime,
+      vote: data.vote_average,
+      voteCount: data.vote_count,
+
+      cast: (data.credits?.cast || []).map((actor) => ({
+        id: actor.id,
+        name: actor.name,
+        character: actor.character,
+        profile: actor.profile_path,
+        order: actor.order,
+      })),
+
+      director:
+        (data.crew || []).find((person) => person.job === "Director") || null,
+
+      writers: (data.crew || [])
+        .filter(
+          (person) => person.job === "Writer" || person.department === "Writing",
+        )
+        .map((person) => ({
+          id: person.id,
+          name: person.name,
+          job: person.job,
+          profile: person.profile_path,
+        })),
+
+      crew: (data.crew || []).map((person) => ({
+        id: person.id,
+        name: person.name,
+        job: person.job,
+        department: person.department,
+        profile: person.profile_path,
+      })),
+
+      guestStars: (data.guest_stars || []).map((guest) => ({
+        id: guest.id,
+        name: guest.name,
+        character: guest.character,
+        profile: guest.profile_path,
+        order: guest.order,
+      })),
+
+      images: {
+        stills: (data.images?.stills || []).map((image) => image.file_path),
+      },
+
+      videos: (data.videos?.results || []).map((video) => ({
+        id: video.id,
+        name: video.name,
+        key: video.key,
+        site: video.site,
+        type: video.type,
+        official: video.official,
+        publishedAt: video.published_at,
+      })),
+
+      externalIds: {
+        imdb: data.external_ids?.imdb_id || null,
+        tvdb: data.external_ids?.tvdb_id || null,
+        wikidata: data.external_ids?.wikidata_id || null,
+      },
+    };
+
+    res.status(200).json({ episode });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Server Error" });
@@ -878,6 +1097,7 @@ module.exports = {
   getSerieGenres,
   getSerieById,
   getSerieSeason,
+  getSerieEpisode,
   addTvToList,
   getSeriesFromList,
   getSeriesFromListById,

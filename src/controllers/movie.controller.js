@@ -59,6 +59,16 @@ const getMovieById = async (req, res) => {
     const { id } = req.params;
     const data = await TmdbService.getSingleMovie(id);
 
+    const usRelease = (data.release_dates?.results || []).find(
+      (entry) => entry.iso_3166_1 === "US",
+    );
+    const certification =
+      (usRelease?.release_dates || [])
+        .map((r) => r.certification)
+        .find((c) => c) || null;
+
+    const usProviders = data["watch/providers"]?.results?.US || null;
+
     const movie = {
       tmdbId: data.id,
       title: data.title,
@@ -75,6 +85,22 @@ const getMovieById = async (req, res) => {
       popularity: data.popularity,
       homepage: data.homepage,
       imdbId: data.imdb_id,
+      adult: data.adult,
+      video: data.video,
+      budget: data.budget,
+      revenue: data.revenue,
+      originalLanguage: data.original_language,
+      originCountry: data.origin_country || [],
+      certification,
+
+      collection: data.belongs_to_collection
+        ? {
+            id: data.belongs_to_collection.id,
+            name: data.belongs_to_collection.name,
+            poster: data.belongs_to_collection.poster_path,
+            backdrop: data.belongs_to_collection.backdrop_path,
+          }
+        : null,
 
       genres: data.genres.map((genre) => ({
         id: genre.id,
@@ -85,6 +111,12 @@ const getMovieById = async (req, res) => {
         id: company.id,
         name: company.name,
         logo: company.logo_path,
+        originCountry: company.origin_country,
+      })),
+
+      productionCountries: (data.production_countries || []).map((country) => ({
+        iso: country.iso_3166_1,
+        name: country.name,
       })),
 
       spokenLanguages: data.spoken_languages.map((language) => ({
@@ -116,10 +148,50 @@ const getMovieById = async (req, res) => {
           (video) => video.site === "YouTube" && video.type === "Trailer",
         ) || null,
 
+      videos: (data.videos?.results || []).map((video) => ({
+        id: video.id,
+        name: video.name,
+        key: video.key,
+        site: video.site,
+        type: video.type,
+        official: video.official,
+        publishedAt: video.published_at,
+      })),
+
       images: {
         posters: data.images.posters.map((image) => image.file_path),
         backdrops: data.images.backdrops.map((image) => image.file_path),
+        logos: (data.images.logos || []).map((image) => image.file_path),
       },
+
+      externalIds: {
+        imdb: data.external_ids?.imdb_id || data.imdb_id || null,
+        facebook: data.external_ids?.facebook_id || null,
+        instagram: data.external_ids?.instagram_id || null,
+        twitter: data.external_ids?.twitter_id || null,
+        wikidata: data.external_ids?.wikidata_id || null,
+      },
+
+      watchProviders: usProviders
+        ? {
+            link: usProviders.link || null,
+            flatrate: (usProviders.flatrate || []).map((p) => ({
+              id: p.provider_id,
+              name: p.provider_name,
+              logo: p.logo_path,
+            })),
+            rent: (usProviders.rent || []).map((p) => ({
+              id: p.provider_id,
+              name: p.provider_name,
+              logo: p.logo_path,
+            })),
+            buy: (usProviders.buy || []).map((p) => ({
+              id: p.provider_id,
+              name: p.provider_name,
+              logo: p.logo_path,
+            })),
+          }
+        : null,
 
       similarMovies: data.similar.results.map((movie) => ({
         tmdbId: movie.id,

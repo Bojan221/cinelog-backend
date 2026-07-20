@@ -5,6 +5,7 @@ const {
   getSerieGenres,
   getSerieById,
   getSerieSeason,
+  getSerieEpisode,
   addTvToList,
   getSeriesFromList,
   getSeriesFromListById,
@@ -30,6 +31,10 @@ router.get("/:id/season/:seasonNumber/watched", getWatchedEpisodes);
 router.post("/:id/episodes/watched", markEpisodeWatched);
 router.delete("/:id/episodes/watched", unmarkEpisodeWatched);
 
+router.get(
+  "/:id/season/:seasonNumber/episode/:episodeNumber",
+  getSerieEpisode,
+);
 router.get("/:id/season/:seasonNumber", getSerieSeason);
 router.get("/:id", getSerieById);
 

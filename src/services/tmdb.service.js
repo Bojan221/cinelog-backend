@@ -30,8 +30,12 @@ const TmdbService = {
   },
   getSingleMovie: async (id) => {
     const result = await apiClient.get(
-      `/movie/${id}?append_to_response=credits,videos,images,recommendations,similar,reviews,keywords`,
+      `/movie/${id}?append_to_response=credits,videos,images,recommendations,similar,reviews,keywords,release_dates,watch/providers,external_ids,translations,lists,changes`.replace(
+        /\s/g,
+        "",
+      ),
     );
+
     return result.data;
   },
   getActor: async (id) => {
@@ -63,28 +67,37 @@ const TmdbService = {
   },
   getSingleSerie: async (id) => {
     const result = await apiClient.get(
-      `/tv/${id}?language=en-US&append_to_response=aggregate_credits,content_ratings,external_ids,images,keywords,recommendations,reviews,similar,videos`,
+      `/tv/${id}?language=en-US&append_to_response=aggregate_credits,content_ratings,episode_groups,external_ids,images,keywords,recommendations,reviews,similar,translations,videos,watch/providers`,
     );
+
     return result.data;
   },
   getSerieSeason: async (id, seasonNumber) => {
     const result = await apiClient.get(
-      `/tv/${id}/season/${seasonNumber}?language=en-US`,
+      `/tv/${id}/season/${seasonNumber}?language=en-US&append_to_response=aggregate_credits,credits,external_ids,images,videos`,
     );
+
     return result.data;
   },
-  getTopRated: async() => { 
-    const result = await apiClient.get('/movie/top_rated')
+  getSerieEpisode: async (id, seasonNumber, episodeNumber) => {
+    const result = await apiClient.get(
+      `/tv/${id}/season/${seasonNumber}/episode/${episodeNumber}?language=en-US&append_to_response=credits,external_ids,images,videos`,
+    );
+
     return result.data;
   },
-  getTrending: async()=> {
-    const result = await apiClient.get('/trending/all/week')
+  getTopRated: async () => {
+    const result = await apiClient.get("/movie/top_rated");
     return result.data;
   },
-  getUpcoming: async()=> { 
-    const result = await apiClient.get('/movie/upcoming')
+  getTrending: async () => {
+    const result = await apiClient.get("/trending/all/week");
     return result.data;
-  }
+  },
+  getUpcoming: async () => {
+    const result = await apiClient.get("/movie/upcoming");
+    return result.data;
+  },
 };
 
 module.exports = { TmdbService };
