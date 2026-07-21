@@ -957,6 +957,51 @@ const ensureWatchingStatus = async (userId, tvshowId) => {
     [watchingRows[0].id, serieDbId],
   );
 };
+const maybeMoveShowToWatched = async (userId, tvshowId, mediaId) => {
+  const data = await TmdbService.getSingleSerie(tvshowId);
+
+  const FINISHED_STATUSES = ["Ended", "Canceled", "Cancelled"];
+  if (!FINISHED_STATUSES.includes(data.status)) return false;
+
+  const regularSeasons = (data.seasons || []).filter(
+    (s) => s.season_number > 0 && s.episode_count > 0,
+  );
+  if (regularSeasons.length === 0) return false;
+
+  const [completedRows] = await db.query(
+    `SELECT season_number FROM user_seasons
+      WHERE user_id = ? AND tvshow_id = ?`,
+    [userId, tvshowId],
+  );
+  const completed = new Set(completedRows.map((r) => r.season_number));
+
+  const allSeasonsDone = regularSeasons.every((s) =>
+    completed.has(s.season_number),
+  );
+  if (!allSeasonsDone) return false;
+
+  const [lists] = await db.query(
+    "SELECT id, name FROM lists WHERE user_id = ? AND media_type = ? AND name IN (?, ?)",
+    [userId, "tv", "Watching", "Watched"],
+  );
+  const watching = lists.find((l) => l.name === "Watching");
+  const watched = lists.find((l) => l.name === "Watched");
+  if (!watched) return false;
+
+  if (watching) {
+    await db.query("DELETE FROM list_items WHERE list_id = ? AND media_id = ?", [
+      watching.id,
+      mediaId,
+    ]);
+  }
+
+  await db.query(
+    "INSERT IGNORE INTO list_items (list_id, media_id) VALUES (?, ?)",
+    [watched.id, mediaId],
+  );
+
+  return true;
+};
 
 const markEpisodeWatched = async (req, res) => {
   try {
@@ -979,8 +1024,6 @@ const markEpisodeWatched = async (req, res) => {
       [userId, tvshowId, mediaId, seasonNumber, episodeNumber, poster ?? null],
     );
 
-    // Best-effort: starting to watch a show should mark it as "Watching".
-    // A failure here must not fail the episode write.
     try {
       await ensureWatchingStatus(userId, tvshowId);
     } catch (statusErr) {
@@ -997,6 +1040,7 @@ const markEpisodeWatched = async (req, res) => {
     );
 
     let seasonCompleted = false;
+    let showCompleted = false;
     if (totalEpisodes > 0 && count >= totalEpisodes) {
       await db.query(
         `INSERT IGNORE INTO user_seasons
@@ -1005,11 +1049,18 @@ const markEpisodeWatched = async (req, res) => {
         [userId, tvshowId, seasonNumber],
       );
       seasonCompleted = true;
+
+      try {
+        showCompleted = await maybeMoveShowToWatched(userId, tvshowId, mediaId);
+      } catch (moveErr) {
+        console.error("maybeMoveShowToWatched failed:", moveErr);
+      }
     }
 
     return res.status(201).json({
       message: "Episode marked as watched",
       seasonCompleted,
+      showCompleted,
     });
   } catch (err) {
     console.error(err);
