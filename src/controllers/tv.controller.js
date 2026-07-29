@@ -484,10 +484,11 @@ const addTvToList = async (req, res) => {
     }
 
     let targetListId;
+    let targetListName = null;
 
     if (listId) {
       const [list] = await db.query(
-        "SELECT id FROM lists WHERE id = ? AND user_id = ?",
+        "SELECT id, name FROM lists WHERE id = ? AND user_id = ?",
         [listId, userId],
       );
 
@@ -496,7 +497,9 @@ const addTvToList = async (req, res) => {
       }
 
       targetListId = list[0].id;
+      targetListName = list[0].name;
     } else {
+      targetListName = listName;
       const STATUS_LISTS = ["Watchlist", "Watching", "Watched"];
 
       if (STATUS_LISTS.includes(listName)) {
@@ -547,6 +550,14 @@ const addTvToList = async (req, res) => {
       targetListId,
       serieDbId,
     ]);
+
+    if (targetListName === "Watched") {
+      try {
+        await backfillWatchedEpisodes(userId, serieId, serieDbId);
+      } catch (backfillErr) {
+        console.error("backfillWatchedEpisodes failed:", backfillErr);
+      }
+    }
 
     return res.status(201).json({
       message: "Serie added to list",
@@ -633,6 +644,19 @@ const moveTvToList = async (req, res) => {
       .filter((l) => l.name !== listName)
       .map((l) => l.id);
 
+    // If the show is leaving "Watched", remember it so we can wipe its progress.
+    let leavingWatched = false;
+    if (listName !== "Watched") {
+      const watchedList = lists.find((l) => l.name === "Watched");
+      if (watchedList) {
+        const [inWatched] = await db.query(
+          "SELECT id FROM list_items WHERE list_id = ? AND media_id = ?",
+          [watchedList.id, serieDbId],
+        );
+        leavingWatched = inWatched.length > 0;
+      }
+    }
+
     if (otherListIds.length > 0) {
       await db.query(
         "DELETE FROM list_items WHERE media_id = ? AND list_id IN (?)",
@@ -650,6 +674,16 @@ const moveTvToList = async (req, res) => {
         "INSERT INTO list_items (list_id, media_id) VALUES (?, ?)",
         [target.id, serieDbId],
       );
+    }
+
+    if (listName === "Watched") {
+      try {
+        await backfillWatchedEpisodes(userId, serieId, serieDbId);
+      } catch (backfillErr) {
+        console.error("backfillWatchedEpisodes failed:", backfillErr);
+      }
+    } else if (leavingWatched) {
+      await clearWatchProgress(userId, serieId);
     }
 
     return res.status(200).json({ message: `Serie moved to ${listName}` });
@@ -693,6 +727,10 @@ const removeTvFromList = async (req, res) => {
 
     if (result.affectedRows === 0) {
       return res.status(404).json({ message: "Serie is not in this list" });
+    }
+
+    if (listName === "Watched") {
+      await clearWatchProgress(userId, serieId);
     }
 
     return res.status(200).json({ message: "Serie removed from list" });
@@ -772,7 +810,7 @@ const removeTvFromListById = async (req, res) => {
     const { listId, serieId } = req.params;
 
     const [lists] = await db.query(
-      "SELECT id FROM lists WHERE id = ? AND user_id = ?",
+      "SELECT id, name FROM lists WHERE id = ? AND user_id = ?",
       [listId, userId],
     );
 
@@ -798,6 +836,10 @@ const removeTvFromListById = async (req, res) => {
 
     if (result.affectedRows === 0) {
       return res.status(404).json({ message: "Serie is not in this list" });
+    }
+
+    if (lists[0].name === "Watched") {
+      await clearWatchProgress(userId, serieId);
     }
 
     return res.status(200).json({ message: "Serie removed from list" });
@@ -1001,6 +1043,89 @@ const maybeMoveShowToWatched = async (userId, tvshowId, mediaId) => {
   );
 
   return true;
+};
+
+const backfillWatchedEpisodes = async (userId, tvshowId, mediaId) => {
+  const data = await TmdbService.getSingleSerie(tvshowId);
+
+  const regularSeasons = (data.seasons || []).filter(
+    (s) => s.season_number > 0 && s.episode_count > 0,
+  );
+  if (regularSeasons.length === 0) return 0;
+
+  const seasonsData = await Promise.all(
+    regularSeasons.map((s) =>
+      TmdbService.getSerieSeason(tvshowId, s.season_number).catch(() => null),
+    ),
+  );
+
+  const today = new Date().toISOString().slice(0, 10);
+
+  const episodeRows = [];
+  const completedSeasons = [];
+
+  for (const season of seasonsData) {
+    if (!season) continue;
+    const episodes = season.episodes || [];
+    if (episodes.length === 0) continue;
+
+    // Only episodes that have actually aired.
+    const aired = episodes.filter((ep) => ep.air_date && ep.air_date <= today);
+    if (aired.length === 0) continue;
+
+    for (const ep of aired) {
+      episodeRows.push([
+        userId,
+        tvshowId,
+        mediaId,
+        ep.season_number,
+        ep.episode_number,
+        ep.still_path ?? null,
+        ep.air_date,
+      ]);
+    }
+
+    if (aired.length === episodes.length) {
+      const lastAirDate = aired.reduce(
+        (max, ep) => (ep.air_date > max ? ep.air_date : max),
+        aired[0].air_date,
+      );
+      completedSeasons.push([userId, tvshowId, aired[0].season_number, lastAirDate]);
+    }
+  }
+
+  if (episodeRows.length === 0) return 0;
+
+  await db.query(
+    `INSERT IGNORE INTO user_episodes
+       (user_id, tvshow_id, media_id, season_number, episode_number, poster, watched_at)
+     VALUES ?`,
+    [episodeRows],
+  );
+
+  if (completedSeasons.length > 0) {
+    await db.query(
+      `INSERT IGNORE INTO user_seasons
+         (user_id, tvshow_id, season_number, completed_at)
+       VALUES ?`,
+      [completedSeasons],
+    );
+  }
+
+  return episodeRows.length;
+};
+
+// Wipes all episode/season watch progress for a show.
+// Used when a show leaves "Watched", so progress doesn't linger as ghost data.
+const clearWatchProgress = async (userId, tvshowId) => {
+  await db.query(
+    "DELETE FROM user_episodes WHERE user_id = ? AND tvshow_id = ?",
+    [userId, tvshowId],
+  );
+  await db.query(
+    "DELETE FROM user_seasons WHERE user_id = ? AND tvshow_id = ?",
+    [userId, tvshowId],
+  );
 };
 
 const markEpisodeWatched = async (req, res) => {
