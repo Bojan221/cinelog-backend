@@ -38,6 +38,10 @@ const TmdbService = {
 
     return result.data;
   },
+  getPopularActors: async (page = 1) => {
+    const result = await apiClient.get('/person/popular', { params: { page } })
+    return result.data
+  },
   getActor: async (id) => {
     const result = await apiClient.get(
       `/person/${id}?append_to_response=movie_credits,tv_credits,images,external_ids`,

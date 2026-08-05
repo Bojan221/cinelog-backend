@@ -65,4 +65,66 @@ const addComment = async (req, res) => {
   }
 };
 
-module.exports = { getMediaComments, addComment };
+const updateComment = async (req, res) => {
+  try {
+    const commentId = req.params.id;
+    const userId = req.user.id;
+    const { content } = req.body;
+
+    const [result] = await db.query(
+      "UPDATE comments SET content = ? WHERE id = ? AND user_id = ?",
+      [content, commentId, userId],
+    );
+
+    if (result.affectedRows === 0) {
+      return res
+        .status(404)
+        .json({ message: "Comment not found or not yours" });
+    }
+
+    const [rows] = await db.query(
+      `SELECT c.id, c.user_id, c.content, c.tmdb_id, c.media_type, c.created_at,
+              u.first_name, u.last_name, u.avatar, u.username
+       FROM comments c
+       JOIN users u ON u.id = c.user_id
+       WHERE c.id = ?`,
+      [commentId],
+    );
+
+    res.status(200).json({ comment: mapComment(rows[0]) });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+const deleteComment = async (req, res) => {
+  try {
+    const commentId = req.params.id;
+    const userId = req.user.id;
+
+    const [existing] = await db.query(
+      "SELECT user_id FROM comments WHERE id = ?",
+      [commentId],
+    );
+
+    if (existing.length === 0) {
+      return res.status(404).json({ message: "Comment doesnt exist" });
+    }
+
+    if (existing[0].user_id !== userId) {
+      return res
+        .status(403)
+        .json({ message: "Cant delete other user comments" });
+    }
+
+    await db.query("DELETE FROM comments WHERE id = ?", [commentId]);
+
+    return res.status(200).json({ message: "Comment deleted successfully" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+module.exports = { getMediaComments, addComment,updateComment,deleteComment};

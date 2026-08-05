@@ -35,7 +35,15 @@ const getSerieGenres = async (req, res) => {
 const getSerieById = async (req, res) => {
   try {
     const { id } = req.params;
+    const userId = req.user.id;
     const data = await TmdbService.getSingleSerie(id);
+
+    const [rows] = await db.query(
+      `SELECT vote FROM votes WHERE tmdb_id = ? AND user_id = ? AND media_type = ? `,
+      [id, userId, "tv"],
+    );
+
+    const vote = rows.length === 0 ? null : rows[0].vote;
 
     const usRating = (data.content_ratings?.results || []).find(
       (entry) => entry.iso_3166_1 === "US",
@@ -61,6 +69,7 @@ const getSerieById = async (req, res) => {
       numberOfSeasons: data.number_of_seasons,
       numberOfEpisodes: data.number_of_episodes,
       vote: data.vote_average,
+      myVote: vote,
       voteCount: data.vote_count,
       popularity: data.popularity,
       homepage: data.homepage,
@@ -325,7 +334,8 @@ const getSerieSeason = async (req, res) => {
 
         writers: (episode.crew || [])
           .filter(
-            (person) => person.job === "Writer" || person.department === "Writing",
+            (person) =>
+              person.job === "Writer" || person.department === "Writing",
           )
           .map((person) => ({
             id: person.id,
@@ -387,7 +397,8 @@ const getSerieEpisode = async (req, res) => {
 
       writers: (data.crew || [])
         .filter(
-          (person) => person.job === "Writer" || person.department === "Writing",
+          (person) =>
+            person.job === "Writer" || person.department === "Writing",
         )
         .map((person) => ({
           id: person.id,
@@ -1031,10 +1042,10 @@ const maybeMoveShowToWatched = async (userId, tvshowId, mediaId) => {
   if (!watched) return false;
 
   if (watching) {
-    await db.query("DELETE FROM list_items WHERE list_id = ? AND media_id = ?", [
-      watching.id,
-      mediaId,
-    ]);
+    await db.query(
+      "DELETE FROM list_items WHERE list_id = ? AND media_id = ?",
+      [watching.id, mediaId],
+    );
   }
 
   await db.query(
@@ -1090,7 +1101,12 @@ const backfillWatchedEpisodes = async (userId, tvshowId, mediaId) => {
         (max, ep) => (ep.air_date > max ? ep.air_date : max),
         aired[0].air_date,
       );
-      completedSeasons.push([userId, tvshowId, aired[0].season_number, lastAirDate]);
+      completedSeasons.push([
+        userId,
+        tvshowId,
+        aired[0].season_number,
+        lastAirDate,
+      ]);
     }
   }
 

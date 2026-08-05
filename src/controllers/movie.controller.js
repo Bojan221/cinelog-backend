@@ -57,7 +57,11 @@ const getMovieGenres = async (req, res) => {
 const getMovieById = async (req, res) => {
   try {
     const { id } = req.params;
+    const userId = req.user.id;
     const data = await TmdbService.getSingleMovie(id);
+    const [rows] = await db.query(`SELECT vote FROM votes WHERE tmdb_id = ? AND user_id = ? AND media_type = ? `,[id, userId, 'movie'])
+    
+    const vote = rows.length === 0 ? null : rows[0].vote 
 
     const usRelease = (data.release_dates?.results || []).find(
       (entry) => entry.iso_3166_1 === "US",
@@ -81,6 +85,7 @@ const getMovieById = async (req, res) => {
       runtime: data.runtime,
       status: data.status,
       vote: data.vote_average,
+      myVote: vote,
       voteCount: data.vote_count,
       popularity: data.popularity,
       homepage: data.homepage,

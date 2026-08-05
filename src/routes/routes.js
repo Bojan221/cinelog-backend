@@ -9,5 +9,6 @@ router.use("/actors",authMiddleware,require("./actors.routes"))
 router.use("/dashboards",authMiddleware,require("./dashboard.routes"))
 router.use("/lists",authMiddleware,require("./lists.routes"))
 router.use("/comments", authMiddleware, require("./comment.routes"))
+router.use("/votes", authMiddleware, require("./vote.routes"))
 
 module.exports = router;
